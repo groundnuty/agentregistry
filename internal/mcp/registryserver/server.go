@@ -3,6 +3,7 @@ package registryserver
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -32,6 +33,7 @@ func NewServer(registry service.RegistryService) *mcp.Server {
 	})
 
 	addAgentTools(server, registry)
+	addAgentCardTools(server, registry)
 	addServerTools(server, registry)
 	addSkillTools(server, registry)
 	addDeploymentTools(server, registry)
@@ -110,6 +112,84 @@ func addAgentTools(server *mcp.Server, registry service.RegistryService) {
 			return nil, models.AgentResponse{}, err
 		}
 		return nil, *agent, nil
+	})
+}
+
+// agentCardResult is the structured MCP response for get_agent_card.
+// Card uses any (not json.RawMessage) because the MCP SDK schema generator
+// treats []byte as a JSON array type; pre-parsing to any preserves objects.
+type agentCardResult struct {
+	AgentName string `json:"agent_name"`
+	Version   string `json:"version"`
+	Card      any    `json:"card"`
+}
+
+func addAgentCardTools(server *mcp.Server, registry service.RegistryService) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_agent_card",
+		Description: "Fetch the A2A Agent Card for an agent (defaults to latest version)",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args struct {
+		Name    string `json:"name"`
+		Version string `json:"version,omitempty"`
+	}) (*mcp.CallToolResult, agentCardResult, error) {
+		if args.Name == "" {
+			return nil, agentCardResult{}, fmt.Errorf("name is required")
+		}
+		// Pass version as-is: empty string means "latest" in the DB layer.
+		card, resolvedVersion, err := registry.GetAgentCard(ctx, args.Name, args.Version)
+		if err != nil {
+			return nil, agentCardResult{}, err
+		}
+		var parsed any
+		if err := json.Unmarshal(card, &parsed); err != nil {
+			return nil, agentCardResult{}, fmt.Errorf("decoding agent card: %w", err)
+		}
+		return nil, agentCardResult{
+			AgentName: args.Name,
+			Version:   resolvedVersion,
+			Card:      parsed,
+		}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "search_agent_cards",
+		Description: "Search for agents that have A2A Agent Cards, with optional name filter",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args struct {
+		Search  string `json:"search,omitempty"`
+		Version string `json:"version,omitempty"`
+		Cursor  string `json:"cursor,omitempty"`
+		Limit   int    `json:"limit,omitempty"`
+	}) (*mcp.CallToolResult, models.AgentListResponse, error) {
+		hasCard := true
+		filter := &database.AgentFilter{
+			HasCard: &hasCard,
+		}
+		if args.Search != "" {
+			filter.SubstringName = &args.Search
+		}
+		if args.Version != "" {
+			if args.Version == "latest" {
+				isLatest := true
+				filter.IsLatest = &isLatest
+			} else {
+				filter.Version = &args.Version
+			}
+		}
+
+		limit := clampLimit(args.Limit)
+		agents, nextCursor, err := registry.ListAgents(ctx, filter, args.Cursor, limit)
+		if err != nil {
+			return nil, models.AgentListResponse{}, err
+		}
+
+		out := models.AgentListResponse{
+			Agents:   make([]models.AgentResponse, len(agents)),
+			Metadata: models.AgentMetadata{NextCursor: nextCursor, Count: len(agents)},
+		}
+		for i, a := range agents {
+			out.Agents[i] = *a
+		}
+		return nil, out, nil
 	})
 }
 

@@ -1,0 +1,10 @@
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata:
+  name: agentregistry-mcp
+  namespace: kagent
+spec:
+  url: "http://agentregistry-server:21212/mcp"
+  timeout: 30s
+  sseReadTimeout: 5m0s
+  description: "AgentRegistry MCP server for discovering agents, MCP servers, and skills"

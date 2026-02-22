@@ -192,3 +192,146 @@ func TestAgentAndSkillTools_ListAndGet(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &skillOne))
 	assert.Equal(t, "com.example/skill", skillOne.Skill.Name)
 }
+
+func TestAgentCardTools_GetAndSearch(t *testing.T) {
+	ctx := context.Background()
+
+	testCard := json.RawMessage(`{
+		"name": "Test Agent",
+		"description": "A test agent",
+		"url": "https://example.com/agent",
+		"version": "1.0.0",
+		"capabilities": {},
+		"defaultInputModes": ["text"],
+		"defaultOutputModes": ["text"],
+		"skills": [{"id": "s1", "name": "Skill One", "description": "Does things"}]
+	}`)
+
+	reg := servicetesting.NewFakeRegistry()
+	reg.Agents = []*models.AgentResponse{
+		{
+			Agent: models.AgentJSON{
+				AgentManifest: models.AgentManifest{
+					Name:      "com.example/agent",
+					Language:  "go",
+					Framework: "none",
+				},
+				Title:   "Agent",
+				Version: "1.0.0",
+				Status:  string(model.StatusActive),
+			},
+		},
+		{
+			Agent: models.AgentJSON{
+				AgentManifest: models.AgentManifest{
+					Name:      "com.example/no-card",
+					Language:  "python",
+					Framework: "adk",
+				},
+				Title:   "No Card Agent",
+				Version: "2.0.0",
+				Status:  string(model.StatusActive),
+			},
+		},
+	}
+	reg.AgentCards["com.example/agent:1.0.0"] = testCard
+	// Support latest-version lookup (empty version means latest).
+	// AgentCards map is populated at setup before the server starts; no lock needed.
+	reg.GetAgentCardFn = func(_ context.Context, agentName, version string) (json.RawMessage, string, error) {
+		resolvedVersion := version
+		if version == "" || version == "latest" {
+			resolvedVersion = "1.0.0"
+		}
+		key := agentName + ":" + resolvedVersion
+		if card, ok := reg.AgentCards[key]; ok {
+			return card, resolvedVersion, nil
+		}
+		return nil, "", database.ErrNotFound
+	}
+
+	server := NewServer(reg)
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, serverSession.Wait())
+	}()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "v0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	require.NoError(t, err)
+	defer func() { _ = clientSession.Close() }()
+
+	// get_agent_card - existing card
+	res, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "get_agent_card",
+		Arguments: map[string]any{
+			"name":    "com.example/agent",
+			"version": "1.0.0",
+		},
+	})
+	require.NoError(t, err)
+	raw, _ := json.Marshal(res.StructuredContent)
+	var cardResp agentCardResult
+	require.NoError(t, json.Unmarshal(raw, &cardResp))
+	assert.Equal(t, "com.example/agent", cardResp.AgentName)
+	assert.Equal(t, "1.0.0", cardResp.Version)
+	assert.NotNil(t, cardResp.Card)
+
+	// get_agent_card - latest version (no version specified)
+	res, err = clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "get_agent_card",
+		Arguments: map[string]any{
+			"name": "com.example/agent",
+		},
+	})
+	require.NoError(t, err)
+	raw, _ = json.Marshal(res.StructuredContent)
+	var latestResp agentCardResult
+	require.NoError(t, json.Unmarshal(raw, &latestResp))
+	assert.Equal(t, "com.example/agent", latestResp.AgentName)
+	assert.Equal(t, "1.0.0", latestResp.Version)
+	assert.NotNil(t, latestResp.Card)
+
+	// get_agent_card - missing name (SDK validates required params)
+	_, err = clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_agent_card",
+		Arguments: map[string]any{},
+	})
+	require.Error(t, err)
+
+	// get_agent_card - not found
+	res, err = clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "get_agent_card",
+		Arguments: map[string]any{
+			"name": "nonexistent",
+		},
+	})
+	require.NoError(t, err)
+	assert.True(t, res.IsError)
+
+	// search_agent_cards - returns only agents with cards
+	res, err = clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "search_agent_cards",
+		Arguments: map[string]any{},
+	})
+	require.NoError(t, err)
+	raw, _ = json.Marshal(res.StructuredContent)
+	var searchResp models.AgentListResponse
+	require.NoError(t, json.Unmarshal(raw, &searchResp))
+	require.Len(t, searchResp.Agents, 1)
+	assert.Equal(t, "com.example/agent", searchResp.Agents[0].Agent.Name)
+	assert.Equal(t, 1, searchResp.Metadata.Count)
+
+	// search_agent_cards - with search and limit params accepted
+	res, err = clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "search_agent_cards",
+		Arguments: map[string]any{"search": "example", "limit": 5},
+	})
+	require.NoError(t, err)
+	raw, _ = json.Marshal(res.StructuredContent)
+	var filteredResp models.AgentListResponse
+	require.NoError(t, json.Unmarshal(raw, &filteredResp))
+	// FakeRegistry ignores SubstringName; HasCard filter is applied, so count == 1.
+	assert.Equal(t, 1, filteredResp.Metadata.Count)
+}

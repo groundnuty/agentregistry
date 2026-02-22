@@ -22,7 +22,6 @@ Returns the latest version by default. Use --version to get a specific version.
 
 Examples:
   arctl agent card get my-agent
-  arctl agent card get my-agent --version 1.0.0
   arctl agent card get my-agent --version 1.0.0`,
 	Args:          cobra.ExactArgs(1),
 	SilenceUsage:  true,
