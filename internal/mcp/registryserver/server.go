@@ -32,6 +32,7 @@ func NewServer(registry service.RegistryService) *mcp.Server {
 	})
 
 	addAgentTools(server, registry)
+	addAgentCardSearchTool(server, registry)
 	addServerTools(server, registry)
 	addSkillTools(server, registry)
 	addDeploymentTools(server, registry)
@@ -84,13 +85,17 @@ func addAgentTools(server *mcp.Server, registry service.RegistryService) {
 		return nil, out, nil
 	})
 
+	// Out type is `any` because AgentJSON.Card is json.RawMessage ([]byte).
+	// The go-sdk schema generator maps []byte to JSON "array", but the card
+	// is a JSON object at runtime, causing schema validation to fail.
+	// Using `any` skips output schema validation; the JSON is identical.
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_agent",
 		Description: "Fetch a single published agent version (defaults to latest)",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, args struct {
 		Name    string `json:"name"`
 		Version string `json:"version,omitempty"`
-	}) (*mcp.CallToolResult, models.AgentResponse, error) {
+	}) (*mcp.CallToolResult, any, error) {
 		if args.Name == "" {
 			return nil, models.AgentResponse{}, fmt.Errorf("name is required")
 		}
@@ -110,6 +115,50 @@ func addAgentTools(server *mcp.Server, registry service.RegistryService) {
 			return nil, models.AgentResponse{}, err
 		}
 		return nil, *agent, nil
+	})
+}
+
+func addAgentCardSearchTool(server *mcp.Server, registry service.RegistryService) {
+	// Out type is `any` -- same json.RawMessage/schema reason as get_agent above.
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "search_agent_cards",
+		Description: "Search for agents that have A2A Agent Cards, with optional name filter",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args struct {
+		Search  string `json:"search,omitempty"`
+		Version string `json:"version,omitempty"`
+		Cursor  string `json:"cursor,omitempty"`
+		Limit   int    `json:"limit,omitempty"`
+	}) (*mcp.CallToolResult, any, error) {
+		hasCard := true
+		filter := &database.AgentFilter{
+			HasCard: &hasCard,
+		}
+		if args.Search != "" {
+			filter.SubstringName = &args.Search
+		}
+		if args.Version != "" {
+			if args.Version == "latest" {
+				isLatest := true
+				filter.IsLatest = &isLatest
+			} else {
+				filter.Version = &args.Version
+			}
+		}
+
+		limit := clampLimit(args.Limit)
+		agents, nextCursor, err := registry.ListAgents(ctx, filter, args.Cursor, limit)
+		if err != nil {
+			return nil, models.AgentListResponse{}, err
+		}
+
+		out := models.AgentListResponse{
+			Agents:   make([]models.AgentResponse, len(agents)),
+			Metadata: models.AgentMetadata{NextCursor: nextCursor, Count: len(agents)},
+		}
+		for i, a := range agents {
+			out.Agents[i] = *a
+		}
+		return nil, out, nil
 	})
 }
 

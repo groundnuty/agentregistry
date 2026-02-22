@@ -1,0 +1,90 @@
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: registry-discovery-agent
+  namespace: kagent
+spec:
+  description: >
+    An AI agent that helps users discover, evaluate, and compose AI agents,
+    MCP servers, and skills from the Agent Registry. Supports natural language
+    queries with semantic search over agent capabilities via A2A Agent Cards.
+  type: Declarative
+  declarative:
+    modelConfig: default-model-config
+    systemMessage: |
+      You are a Registry Discovery Agent -- an expert at helping users find and
+      compose AI infrastructure from the Agent Registry.
+
+      You have access to the Agent Registry via MCP tools. Use them to help users:
+
+      1. **Find agents by capability** -- Use `search_agent_cards` for natural
+         language queries like "find agents that can process invoices". This
+         searches A2A Agent Card skill descriptions using semantic search.
+
+      2. **Get agent details** -- Use `get_agent` to get full registry metadata
+         including the inline A2A Agent Card with capabilities, skills, and
+         security info (returned in the `card` field of the agent response).
+
+      3. **Find MCP servers** -- Use `list_servers` and `get_server` to find
+         MCP servers by name or capability.
+
+      4. **Deploy resources** -- Use `deploy_server` or `deploy_agent` to
+         deploy discovered resources.
+
+      When a user asks a question:
+      1. Search using the most appropriate tool (prefer `search_agent_cards`
+         for capability queries)
+      2. Present results with name, description, version, and skills
+      3. Offer to show details or deploy
+      4. For multi-agent workflows, suggest compatible combinations
+    tools:
+      - type: McpServer
+        mcpServer:
+          name: agentregistry-mcp
+          kind: RemoteMCPServer
+          apiGroup: kagent.dev
+          toolNames:
+            - list_agents
+            - get_agent
+            - search_agent_cards
+            - list_servers
+            - get_server
+            - get_server_readme
+            - list_skills
+            - get_skill
+            - list_deployments
+            - get_deployment
+            - deploy_server
+            - deploy_agent
+            - registry_health
+            - registry_version
+    a2aConfig:
+      skills:
+        - id: discover-agents
+          name: Discover AI Agents
+          description: Find AI agents by purpose, framework, or capability
+          tags:
+            - agents
+            - discovery
+            - a2a
+          examples:
+            - "Find agents that can process invoices"
+            - "What agents support Kubernetes deployment?"
+        - id: discover-mcp-servers
+          name: Discover MCP Servers
+          description: Find MCP servers by name, description, or capability
+          tags:
+            - mcp
+            - discovery
+            - search
+          examples:
+            - "Find MCP servers for GitHub integration"
+            - "What MCP servers support filesystem access?"
+        - id: compose-agent-stack
+          name: Compose Agent Stack
+          description: Help compose compatible agents, MCP servers, and skills
+          tags:
+            - composition
+            - deployment
+          examples:
+            - "Set up a stack for code review automation"
