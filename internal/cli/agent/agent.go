@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"github.com/agentregistry-dev/agentregistry/internal/cli/agent/card"
 	"github.com/agentregistry-dev/agentregistry/internal/client"
 	"github.com/spf13/cobra"
 )
@@ -8,8 +9,9 @@ import (
 var verbose bool
 var apiClient *client.Client
 
-func SetAPIClient(client *client.Client) {
-	apiClient = client
+func SetAPIClient(c *client.Client) {
+	apiClient = c
+	card.SetAPIClient(c)
 }
 
 var AgentCmd = &cobra.Command{
@@ -37,4 +39,5 @@ func init() {
 	AgentCmd.AddCommand(DeployCmd)
 	AgentCmd.AddCommand(ListCmd)
 	AgentCmd.AddCommand(ShowCmd)
+	AgentCmd.AddCommand(card.CardCmd)
 }

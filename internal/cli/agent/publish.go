@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -21,6 +22,8 @@ var (
 	dryRunFlag       bool
 	overwriteFlag    bool
 	publishDesc      string
+	cardFile         string
+	noCard           bool
 )
 
 var PublishCmd = &cobra.Command{
@@ -69,6 +72,9 @@ func init() {
 	PublishCmd.Flags().StringVar(&publishDesc, "description", "", "Agent description (when not using agent.yaml)")
 	PublishCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Show what would be done without actually doing it")
 	PublishCmd.Flags().BoolVar(&overwriteFlag, "overwrite", false, "Overwrite if the version is already published")
+	PublishCmd.Flags().StringVar(&cardFile, "card", "", "Path to agent-card.json (overrides auto-detection)")
+	PublishCmd.Flags().BoolVar(&noCard, "no-card", false, "Skip agent-card.json auto-detection")
+	PublishCmd.MarkFlagsMutuallyExclusive("card", "no-card")
 }
 
 func runPublish(cmd *cobra.Command, args []string) error {
@@ -82,7 +88,10 @@ func runPublish(cmd *cobra.Command, args []string) error {
 	var agentJSON *models.AgentJSON
 	var err error
 
-	absPath, _ := filepath.Abs(input)
+	absPath, err := filepath.Abs(input)
+	if err != nil {
+		return fmt.Errorf("resolving project path: %w", err)
+	}
 	mgr := common.NewManifestManager(absPath)
 
 	if mgr.Exists() {
@@ -94,8 +103,13 @@ func runPublish(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Validate agent name
+	// Validate agent name before using it in path construction
 	if err := validators.ValidateAgentName(agentJSON.Name); err != nil {
+		return err
+	}
+
+	// Attach agent card if available (after name validation since name is used in path)
+	if err := attachAgentCard(agentJSON, absPath); err != nil {
 		return err
 	}
 
@@ -182,10 +196,62 @@ func checkAndHandleExistingAgent(agentName, version string) error {
 	return nil
 }
 
+// attachAgentCard reads an agent-card.json and attaches it to the AgentJSON.
+// Priority: --card flag > auto-detect ({dir}/agent-card.json or {dir}/{name}/agent-card.json).
+// Use --no-card to skip auto-detection entirely.
+func attachAgentCard(agentJSON *models.AgentJSON, projectDir string) error {
+	if noCard {
+		return nil
+	}
+
+	var cardPath string
+
+	if cardFile != "" {
+		// Explicit path from --card flag
+		cleanedCard, err := filepath.Abs(cardFile)
+		if err != nil {
+			return fmt.Errorf("resolving card path: %w", err)
+		}
+		cardPath = cleanedCard
+	} else {
+		// Auto-detect: try {projectDir}/agent-card.json, then {projectDir}/{name}/agent-card.json
+		candidates := []string{
+			filepath.Join(projectDir, "agent-card.json"),
+			filepath.Join(projectDir, agentJSON.Name, "agent-card.json"),
+		}
+		for _, c := range candidates {
+			if _, err := os.Stat(c); err == nil {
+				cardPath = c
+				break
+			}
+		}
+	}
+
+	if cardPath == "" {
+		return nil
+	}
+
+	data, err := os.ReadFile(cardPath)
+	if err != nil {
+		return fmt.Errorf("reading agent card %s: %w", cardPath, err)
+	}
+
+	if err := models.ValidateA2AAgentCard(json.RawMessage(data)); err != nil {
+		return fmt.Errorf("validating agent card %s: %w", cardPath, err)
+	}
+
+	printer.PrintInfo(fmt.Sprintf("Found %s, attaching to agent", cardPath))
+	agentJSON.Card = json.RawMessage(data)
+	return nil
+}
+
 // publishToRegistry handles the actual publish or dry-run output.
 func publishToRegistry(agentJSON *models.AgentJSON) error {
 	if dryRunFlag {
-		j, _ := json.MarshalIndent(agentJSON, "", "  ")
+		j, err := json.MarshalIndent(agentJSON, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshalling agent for dry-run: %w", err)
+		}
 		printer.PrintInfo(fmt.Sprintf("[DRY RUN] Would publish agent:\n%s", string(j)))
 		return nil
 	}

@@ -576,6 +576,38 @@ func asHTTPStatus(err error) int {
 	return 0
 }
 
+// GetAgentsWithCards returns all agents that have an A2A Agent Card.
+func (c *Client) GetAgentsWithCards() ([]*models.AgentResponse, error) {
+	limit := 100
+	cursor := ""
+	var all []*models.AgentResponse
+
+	for {
+		q := fmt.Sprintf("/agents?has_card=true&limit=%d", limit)
+		if cursor != "" {
+			q += "&cursor=" + url.QueryEscape(cursor)
+		}
+		req, err := c.newRequest(http.MethodGet, q)
+		if err != nil {
+			return nil, fmt.Errorf("building request for agents with cards: %w", err)
+		}
+
+		var resp models.AgentListResponse
+		if err := c.doJSON(req, &resp); err != nil {
+			return nil, fmt.Errorf("getting agents with cards: %w", err)
+		}
+		for _, ag := range resp.Agents {
+			all = append(all, &ag)
+		}
+		if resp.Metadata.NextCursor == "" {
+			break
+		}
+		cursor = resp.Metadata.NextCursor
+	}
+
+	return all, nil
+}
+
 // DeploymentResponse represents a deployment returned by the API
 type DeploymentResponse struct {
 	ServerName   string            `json:"serverName"`
