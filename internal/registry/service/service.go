@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/agentregistry-dev/agentregistry/pkg/models"
 	"github.com/agentregistry-dev/agentregistry/pkg/registry/database"
@@ -57,6 +58,12 @@ type RegistryService interface {
 	UpsertAgentEmbedding(ctx context.Context, agentName, version string, embedding *database.SemanticEmbedding) error
 	// GetAgentEmbeddingMetadata retrieves the embedding metadata for an agent version
 	GetAgentEmbeddingMetadata(ctx context.Context, agentName, version string) (*database.SemanticEmbeddingMetadata, error)
+	// UpsertAgentCard stores or replaces the A2A Agent Card for an agent version
+	UpsertAgentCard(ctx context.Context, agentName, version string, card json.RawMessage) error
+	// GetAgentCard retrieves the A2A Agent Card and resolved version for an agent (empty version = latest)
+	GetAgentCard(ctx context.Context, agentName, version string) (json.RawMessage, string, error)
+	// DeleteAgentCard removes the A2A Agent Card from an agent version
+	DeleteAgentCard(ctx context.Context, agentName, version string) error
 	// Skills APIs
 	// ListSkills retrieve all skills with optional filtering
 	ListSkills(ctx context.Context, filter *database.SkillFilter, cursor string, limit int) ([]*models.SkillResponse, string, error)

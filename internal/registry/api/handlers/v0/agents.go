@@ -25,6 +25,7 @@ type ListAgentsInput struct {
 	Version                string  `query:"version" json:"version,omitempty" doc:"Filter by version ('latest' for latest version, or an exact version like '1.2.3')" required:"false" example:"latest"`
 	Semantic               bool    `query:"semantic_search" json:"semantic_search,omitempty" doc:"Use semantic search for the search term"`
 	SemanticMatchThreshold float64 `query:"semantic_threshold" json:"semantic_threshold,omitempty" doc:"Optional maximum cosine distance when semantic_search is enabled" required:"false"`
+	HasCard                bool    `query:"has_card" json:"has_card,omitempty" doc:"Filter agents that have an A2A Agent Card" required:"false"`
 }
 
 // AgentDetailInput represents the input for getting agent details
@@ -89,6 +90,10 @@ func RegisterAgentsEndpoints(api huma.API, pathPrefix string, registry service.R
 			} else {
 				filter.Version = &input.Version
 			}
+		}
+		if input.HasCard {
+			hasCard := true
+			filter.HasCard = &hasCard
 		}
 
 		agents, nextCursor, err := registry.ListAgents(ctx, filter, input.Cursor, input.Limit)

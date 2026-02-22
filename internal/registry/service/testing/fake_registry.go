@@ -3,6 +3,7 @@ package testing
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 
 	"github.com/agentregistry-dev/agentregistry/pkg/models"
@@ -25,6 +26,9 @@ type FakeRegistry struct {
 	// Embedding metadata maps (keyed by "name@version")
 	ServerEmbeddingMeta map[string]*database.SemanticEmbeddingMetadata
 	AgentEmbeddingMeta  map[string]*database.SemanticEmbeddingMetadata
+
+	// Agent Card storage (keyed by "name:version")
+	AgentCards map[string]json.RawMessage
 
 	// Call counters for verification
 	UpsertServerEmbeddingCalls int
@@ -51,6 +55,9 @@ type FakeRegistry struct {
 	DeleteAgentFn                   func(ctx context.Context, agentName, version string) error
 	UpsertAgentEmbeddingFn          func(ctx context.Context, agentName, version string, embedding *database.SemanticEmbedding) error
 	GetAgentEmbeddingMetadataFn     func(ctx context.Context, agentName, version string) (*database.SemanticEmbeddingMetadata, error)
+	UpsertAgentCardFn               func(ctx context.Context, agentName, version string, card json.RawMessage) error
+	GetAgentCardFn                  func(ctx context.Context, agentName, version string) (json.RawMessage, string, error)
+	DeleteAgentCardFn               func(ctx context.Context, agentName, version string) error
 	ListSkillsFn                    func(ctx context.Context, filter *database.SkillFilter, cursor string, limit int) ([]*models.SkillResponse, string, error)
 	GetSkillByNameFn                func(ctx context.Context, skillName string) (*models.SkillResponse, error)
 	GetSkillByNameAndVersionFn      func(ctx context.Context, skillName, version string) (*models.SkillResponse, error)
@@ -70,6 +77,7 @@ func NewFakeRegistry() *FakeRegistry {
 	return &FakeRegistry{
 		ServerEmbeddingMeta: make(map[string]*database.SemanticEmbeddingMetadata),
 		AgentEmbeddingMeta:  make(map[string]*database.SemanticEmbeddingMetadata),
+		AgentCards:          make(map[string]json.RawMessage),
 	}
 }
 
@@ -196,7 +204,18 @@ func (f *FakeRegistry) ListAgents(ctx context.Context, filter *database.AgentFil
 	if cursor != "" {
 		return nil, "", nil
 	}
-	return f.Agents, "", nil
+	agents := f.Agents
+	if filter != nil && filter.HasCard != nil && *filter.HasCard {
+		var filtered []*models.AgentResponse
+		for _, a := range agents {
+			key := a.Agent.Name + ":" + a.Agent.Version
+			if _, ok := f.AgentCards[key]; ok {
+				filtered = append(filtered, a)
+			}
+		}
+		agents = filtered
+	}
+	return agents, "", nil
 }
 
 func (f *FakeRegistry) GetAgentByName(ctx context.Context, agentName string) (*models.AgentResponse, error) {
@@ -262,6 +281,45 @@ func (f *FakeRegistry) GetAgentEmbeddingMetadata(ctx context.Context, agentName,
 		return meta, nil
 	}
 	return nil, database.ErrNotFound
+}
+
+// Agent Card methods
+
+func (f *FakeRegistry) UpsertAgentCard(ctx context.Context, agentName, version string, card json.RawMessage) error {
+	if f.UpsertAgentCardFn != nil {
+		return f.UpsertAgentCardFn(ctx, agentName, version, card)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.AgentCards[agentName+":"+version] = card
+	return nil
+}
+
+func (f *FakeRegistry) GetAgentCard(ctx context.Context, agentName, version string) (json.RawMessage, string, error) {
+	if f.GetAgentCardFn != nil {
+		return f.GetAgentCardFn(ctx, agentName, version)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := agentName + ":" + version
+	if card, ok := f.AgentCards[key]; ok {
+		return card, version, nil
+	}
+	return nil, "", database.ErrNotFound
+}
+
+func (f *FakeRegistry) DeleteAgentCard(ctx context.Context, agentName, version string) error {
+	if f.DeleteAgentCardFn != nil {
+		return f.DeleteAgentCardFn(ctx, agentName, version)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := agentName + ":" + version
+	if _, ok := f.AgentCards[key]; !ok {
+		return database.ErrNotFound
+	}
+	delete(f.AgentCards, key)
+	return nil
 }
 
 // Skill methods

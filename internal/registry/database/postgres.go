@@ -1182,6 +1182,9 @@ func (db *PostgreSQL) ListAgents(ctx context.Context, tx pgx.Tx, filter *databas
 			args = append(args, *filter.IsLatest)
 			argIndex++
 		}
+		if filter.HasCard != nil && *filter.HasCard {
+			whereConditions = append(whereConditions, "a2a_card IS NOT NULL")
+		}
 	}
 
 	if semanticActive {
@@ -1841,6 +1844,113 @@ func (db *PostgreSQL) GetAgentEmbeddingMetadata(ctx context.Context, tx pgx.Tx, 
 	}
 
 	return meta, nil
+}
+
+// ==============================
+// Agent Card implementations
+// ==============================
+
+// UpsertAgentCard stores or replaces the A2A Agent Card for an agent version.
+func (db *PostgreSQL) UpsertAgentCard(ctx context.Context, tx pgx.Tx, agentName, version string, card json.RawMessage) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	if err := db.authz.Check(ctx, auth.PermissionActionPublish, auth.Resource{
+		Name: agentName,
+		Type: auth.PermissionArtifactTypeAgent,
+	}); err != nil {
+		return err
+	}
+
+	executor := db.getExecutor(tx)
+	query := `
+		UPDATE agents
+		SET a2a_card = $3, updated_at = NOW()
+		WHERE agent_name = $1 AND version = $2
+	`
+	result, err := executor.Exec(ctx, query, agentName, version, card)
+	if err != nil {
+		return fmt.Errorf("failed to upsert agent card: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return database.ErrNotFound
+	}
+	return nil
+}
+
+// GetAgentCard retrieves the A2A Agent Card for a specific agent version.
+// If version is empty, retrieves the card for the latest version.
+// Returns the card, the resolved version, and any error.
+func (db *PostgreSQL) GetAgentCard(ctx context.Context, tx pgx.Tx, agentName, version string) (json.RawMessage, string, error) {
+	if ctx.Err() != nil {
+		return nil, "", ctx.Err()
+	}
+
+	if err := db.authz.Check(ctx, auth.PermissionActionRead, auth.Resource{
+		Name: agentName,
+		Type: auth.PermissionArtifactTypeAgent,
+	}); err != nil {
+		return nil, "", err
+	}
+
+	executor := db.getExecutor(tx)
+
+	var query string
+	var args []any
+	if version == "" {
+		query = `
+			SELECT a2a_card, version FROM agents
+			WHERE agent_name = $1 AND is_latest = true AND a2a_card IS NOT NULL
+		`
+		args = []any{agentName}
+	} else {
+		query = `
+			SELECT a2a_card, version FROM agents
+			WHERE agent_name = $1 AND version = $2 AND a2a_card IS NOT NULL
+		`
+		args = []any{agentName, version}
+	}
+
+	var card json.RawMessage
+	var resolvedVersion string
+	err := executor.QueryRow(ctx, query, args...).Scan(&card, &resolvedVersion)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", database.ErrNotFound
+		}
+		return nil, "", fmt.Errorf("failed to get agent card: %w", err)
+	}
+	return card, resolvedVersion, nil
+}
+
+// DeleteAgentCard removes the A2A Agent Card from an agent version.
+func (db *PostgreSQL) DeleteAgentCard(ctx context.Context, tx pgx.Tx, agentName, version string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	if err := db.authz.Check(ctx, auth.PermissionActionDelete, auth.Resource{
+		Name: agentName,
+		Type: auth.PermissionArtifactTypeAgent,
+	}); err != nil {
+		return err
+	}
+
+	executor := db.getExecutor(tx)
+	query := `
+		UPDATE agents
+		SET a2a_card = NULL, updated_at = NOW()
+		WHERE agent_name = $1 AND version = $2
+	`
+	result, err := executor.Exec(ctx, query, agentName, version)
+	if err != nil {
+		return fmt.Errorf("failed to delete agent card: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return database.ErrNotFound
+	}
+	return nil
 }
 
 // ==============================

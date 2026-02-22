@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -62,6 +63,7 @@ type AgentFilter struct {
 	SubstringName *string    // for substring search on name
 	Version       *string    // for exact version matching
 	IsLatest      *bool      // for filtering latest versions only
+	HasCard       *bool      // for filtering agents that have an A2A Agent Card
 	Semantic      *SemanticSearchOptions
 }
 
@@ -170,6 +172,12 @@ type Database interface {
 	SetAgentEmbedding(ctx context.Context, tx pgx.Tx, agentName, version string, embedding *SemanticEmbedding) error
 	// GetAgentEmbeddingMetadata returns metadata about an agent's embedding without loading the vector
 	GetAgentEmbeddingMetadata(ctx context.Context, tx pgx.Tx, agentName, version string) (*SemanticEmbeddingMetadata, error)
+	// UpsertAgentCard stores or replaces the A2A Agent Card for an agent version
+	UpsertAgentCard(ctx context.Context, tx pgx.Tx, agentName, version string, card json.RawMessage) error
+	// GetAgentCard retrieves the A2A Agent Card and resolved version for a specific agent version
+	GetAgentCard(ctx context.Context, tx pgx.Tx, agentName, version string) (json.RawMessage, string, error)
+	// DeleteAgentCard removes the A2A Agent Card from an agent version
+	DeleteAgentCard(ctx context.Context, tx pgx.Tx, agentName, version string) error
 
 	// Skills API
 	// CreateSkill inserts a new skill version with official metadata

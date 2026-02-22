@@ -224,7 +224,8 @@ func (s *indexerImpl) indexAgents(ctx context.Context, opts IndexOptions, onProg
 			stats.Processed++
 			name := agent.Agent.Name
 			version := agent.Agent.Version
-			payload := embeddings.BuildAgentEmbeddingPayload(&agent.Agent)
+			// TODO: load a2a_card from DB and pass to embedding builder for richer payloads
+			payload := embeddings.BuildAgentEmbeddingPayload(&agent.Agent, nil)
 
 			if strings.TrimSpace(payload) == "" {
 				log.Printf("Skipping agent %s@%s: empty embedding payload", name, version)

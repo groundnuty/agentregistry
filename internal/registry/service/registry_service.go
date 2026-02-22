@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -595,7 +596,8 @@ func (s *registryServiceImpl) createAgentInTransaction(ctx context.Context, tx p
 	if s.shouldGenerateEmbeddingsOnPublish() { //nolint:nestif
 		go func() {
 			bgCtx := context.Background()
-			payload := embeddings.BuildAgentEmbeddingPayload(&agentJSON)
+			// New agents don't have a card yet, pass nil
+			payload := embeddings.BuildAgentEmbeddingPayload(&agentJSON, nil)
 			if strings.TrimSpace(payload) == "" {
 				return
 			}
@@ -638,6 +640,25 @@ func (s *registryServiceImpl) UpsertAgentEmbedding(ctx context.Context, agentNam
 
 func (s *registryServiceImpl) GetAgentEmbeddingMetadata(ctx context.Context, agentName, version string) (*database.SemanticEmbeddingMetadata, error) {
 	return s.db.GetAgentEmbeddingMetadata(ctx, nil, agentName, version)
+}
+
+func (s *registryServiceImpl) UpsertAgentCard(ctx context.Context, agentName, version string, card json.RawMessage) error {
+	if err := models.ValidateA2AAgentCard(card); err != nil {
+		return fmt.Errorf("%w: %s", database.ErrInvalidInput, err.Error())
+	}
+	return s.db.InTransaction(ctx, func(txCtx context.Context, tx pgx.Tx) error {
+		return s.db.UpsertAgentCard(txCtx, tx, agentName, version, card)
+	})
+}
+
+func (s *registryServiceImpl) GetAgentCard(ctx context.Context, agentName, version string) (json.RawMessage, string, error) {
+	return s.db.GetAgentCard(ctx, nil, agentName, version)
+}
+
+func (s *registryServiceImpl) DeleteAgentCard(ctx context.Context, agentName, version string) error {
+	return s.db.InTransaction(ctx, func(txCtx context.Context, tx pgx.Tx) error {
+		return s.db.DeleteAgentCard(txCtx, tx, agentName, version)
+	})
 }
 
 // GetDeployments retrieves all deployed servers with optional filtering

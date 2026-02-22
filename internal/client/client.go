@@ -576,6 +576,51 @@ func asHTTPStatus(err error) int {
 	return 0
 }
 
+// UpsertAgentCard publishes or replaces an A2A Agent Card for a specific agent version.
+func (c *Client) UpsertAgentCard(name, version string, card json.RawMessage) error {
+	encName := url.PathEscape(name)
+	encVersion := url.PathEscape(version)
+	payload := map[string]json.RawMessage{"card": card}
+	return c.doJsonRequest(http.MethodPut, "/agents/"+encName+"/versions/"+encVersion+"/card", payload, nil)
+}
+
+// GetAgentCard retrieves the A2A Agent Card for a specific agent version.
+// Returns (nil, nil) when the card does not exist.
+func (c *Client) GetAgentCard(name, version string) (*models.AgentCardResponse, error) {
+	encName := url.PathEscape(name)
+	encVersion := url.PathEscape(version)
+	req, err := c.newRequest(http.MethodGet, "/agents/"+encName+"/versions/"+encVersion+"/card")
+	if err != nil {
+		return nil, err
+	}
+	var resp models.AgentCardResponse
+	if err := c.doJSON(req, &resp); err != nil {
+		if respErr := asHTTPStatus(err); respErr == http.StatusNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get agent card: %w", err)
+	}
+	return &resp, nil
+}
+
+// GetAgentCardLatest retrieves the A2A Agent Card for the latest agent version.
+// Returns (nil, nil) when the card does not exist.
+func (c *Client) GetAgentCardLatest(name string) (*models.AgentCardResponse, error) {
+	encName := url.PathEscape(name)
+	req, err := c.newRequest(http.MethodGet, "/agents/"+encName+"/card")
+	if err != nil {
+		return nil, err
+	}
+	var resp models.AgentCardResponse
+	if err := c.doJSON(req, &resp); err != nil {
+		if respErr := asHTTPStatus(err); respErr == http.StatusNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get latest agent card: %w", err)
+	}
+	return &resp, nil
+}
+
 // DeploymentResponse represents a deployment returned by the API
 type DeploymentResponse struct {
 	ServerName   string            `json:"serverName"`
