@@ -206,14 +206,12 @@ func App(_ context.Context, opts ...types.AppOptions) error {
 	}
 
 	// Initialize job manager and indexer for embeddings
-	var routeOpts *router.RouteOptions
+	routeOpts := &router.RouteOptions{}
 	if cfg.Embeddings.Enabled && embeddingProvider != nil {
 		jobManager := jobs.NewManager()
 		indexer := service.NewIndexer(registryService, embeddingProvider, cfg.Embeddings.Dimensions)
-		routeOpts = &router.RouteOptions{
-			Indexer:    indexer,
-			JobManager: jobManager,
-		}
+		routeOpts.Indexer = indexer
+		routeOpts.JobManager = jobManager
 		log.Println("Embeddings indexing API enabled")
 	}
 

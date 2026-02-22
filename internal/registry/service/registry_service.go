@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -520,8 +521,19 @@ func (s *registryServiceImpl) createAgentInTransaction(ctx context.Context, tx p
 		return nil, fmt.Errorf("invalid agent payload: name and version are required")
 	}
 
+	// Extract card before storing -- card goes in a2a_card column, not in value
+	card := req.Card
+
+	// Validate card early so we fail before creating the agent
+	if len(card) > 0 {
+		if err := models.ValidateA2AAgentCard(card); err != nil {
+			return nil, fmt.Errorf("%w: %s", database.ErrInvalidInput, err.Error())
+		}
+	}
+
 	publishTime := time.Now()
 	agentJSON := *req
+	agentJSON.Card = nil // keep value column clean
 
 	// Check duplicate remote URLs among agents
 	for _, remote := range agentJSON.Remotes {
@@ -591,11 +603,20 @@ func (s *registryServiceImpl) createAgentInTransaction(ctx context.Context, tx p
 		return nil, err
 	}
 
+	// Store card in a2a_card column if provided
+	if len(card) > 0 {
+		if err := s.db.UpsertAgentCard(ctx, tx, agentJSON.Name, agentJSON.Version, card); err != nil {
+			return nil, fmt.Errorf("storing agent card: %w", err)
+		}
+		// Include card in the response
+		result.Agent.Card = card
+	}
+
 	// Generate embedding asynchronously (non-blocking, best-effort)
 	if s.shouldGenerateEmbeddingsOnPublish() { //nolint:nestif
 		go func() {
 			bgCtx := context.Background()
-			payload := embeddings.BuildAgentEmbeddingPayload(&agentJSON)
+			payload := embeddings.BuildAgentEmbeddingPayload(&agentJSON, card)
 			if strings.TrimSpace(payload) == "" {
 				return
 			}
@@ -638,6 +659,25 @@ func (s *registryServiceImpl) UpsertAgentEmbedding(ctx context.Context, agentNam
 
 func (s *registryServiceImpl) GetAgentEmbeddingMetadata(ctx context.Context, agentName, version string) (*database.SemanticEmbeddingMetadata, error) {
 	return s.db.GetAgentEmbeddingMetadata(ctx, nil, agentName, version)
+}
+
+func (s *registryServiceImpl) UpsertAgentCard(ctx context.Context, agentName, version string, card json.RawMessage) error {
+	if err := models.ValidateA2AAgentCard(card); err != nil {
+		return fmt.Errorf("%w: %s", database.ErrInvalidInput, err.Error())
+	}
+	return s.db.InTransaction(ctx, func(txCtx context.Context, tx pgx.Tx) error {
+		return s.db.UpsertAgentCard(txCtx, tx, agentName, version, card)
+	})
+}
+
+func (s *registryServiceImpl) GetAgentCard(ctx context.Context, agentName, version string) (json.RawMessage, string, error) {
+	return s.db.GetAgentCard(ctx, nil, agentName, version)
+}
+
+func (s *registryServiceImpl) DeleteAgentCard(ctx context.Context, agentName, version string) error {
+	return s.db.InTransaction(ctx, func(txCtx context.Context, tx pgx.Tx) error {
+		return s.db.DeleteAgentCard(txCtx, tx, agentName, version)
+	})
 }
 
 // GetDeployments retrieves all deployed servers with optional filtering

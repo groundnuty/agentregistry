@@ -192,9 +192,14 @@ docker-tag-as-dev:
 	docker push $(DOCKER_REGISTRY)/$(DOCKER_REPO)/arctl-agentgateway:dev
 	@echo "✓ Docker image pulled successfully"
 
-docker-compose-up: docker docker-tag-as-dev
+docker-compose-up: docker-server-local
 	@echo "Starting services with Docker Compose..."
-	VERSION=$(VERSION) DOCKER_REGISTRY=$(DOCKER_REGISTRY) docker compose -p agentregistry -f internal/daemon/docker-compose.yml up -d --wait --pull always
+	VERSION=$(VERSION) DOCKER_REGISTRY=$(DOCKER_REGISTRY) docker compose -p agentregistry -f internal/daemon/docker-compose.yml up -d --wait
+
+docker-server-local: .env
+	@echo "Building server Docker image (local)..."
+	docker build -f docker/server.Dockerfile -t $(DOCKER_REGISTRY)/$(DOCKER_REPO)/server:$(VERSION) --build-arg LDFLAGS="$(LDFLAGS)" .
+	@echo "✓ Docker image built successfully"
 
 docker-compose-down:
 	VERSION=$(VERSION) DOCKER_REGISTRY=$(DOCKER_REGISTRY) docker compose -p agentregistry -f internal/daemon/docker-compose.yml down

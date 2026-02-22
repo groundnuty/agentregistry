@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/modelcontextprotocol/registry/pkg/model"
@@ -16,6 +17,7 @@ type AgentJSON struct {
 	Repository    *model.Repository  `json:"repository,omitempty" doc:"Optional repository metadata for the agent source code."`
 	Packages      []AgentPackageInfo `json:"packages,omitempty"`
 	Remotes       []model.Transport  `json:"remotes,omitempty"`
+	Card          json.RawMessage    `json:"card,omitempty"`
 }
 
 type AgentPackageInfo struct {

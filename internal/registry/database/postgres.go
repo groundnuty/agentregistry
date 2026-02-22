@@ -1182,6 +1182,9 @@ func (db *PostgreSQL) ListAgents(ctx context.Context, tx pgx.Tx, filter *databas
 			args = append(args, *filter.IsLatest)
 			argIndex++
 		}
+		if filter.HasCard != nil && *filter.HasCard {
+			whereConditions = append(whereConditions, "a2a_card IS NOT NULL")
+		}
 	}
 
 	if semanticActive {
@@ -1209,7 +1212,7 @@ func (db *PostgreSQL) ListAgents(ctx context.Context, tx pgx.Tx, filter *databas
 	}
 
 	selectClause := `
-		SELECT agent_name, version, status, published_at, updated_at, is_latest, value`
+		SELECT agent_name, version, status, published_at, updated_at, is_latest, value, a2a_card`
 	orderClause := "ORDER BY agent_name, version"
 
 	if semanticActive {
@@ -1253,22 +1256,26 @@ func (db *PostgreSQL) ListAgents(ctx context.Context, tx pgx.Tx, filter *databas
 		var publishedAt, updatedAt time.Time
 		var isLatest bool
 		var valueJSON []byte
+		var cardJSON []byte
 		var semanticScore sql.NullFloat64
 
 		var scanErr error
 		if semanticActive {
-			scanErr = rows.Scan(&name, &version, &status, &publishedAt, &updatedAt, &isLatest, &valueJSON, &semanticScore)
+			scanErr = rows.Scan(&name, &version, &status, &publishedAt, &updatedAt, &isLatest, &valueJSON, &cardJSON, &semanticScore)
 		} else {
-			scanErr = rows.Scan(&name, &version, &status, &publishedAt, &updatedAt, &isLatest, &valueJSON)
+			scanErr = rows.Scan(&name, &version, &status, &publishedAt, &updatedAt, &isLatest, &valueJSON, &cardJSON)
 		}
 
 		if scanErr != nil {
-			return nil, "", fmt.Errorf("failed to scan agent row: %w", err)
+			return nil, "", fmt.Errorf("failed to scan agent row: %w", scanErr)
 		}
 
 		var agentJSON models.AgentJSON
 		if err := json.Unmarshal(valueJSON, &agentJSON); err != nil {
 			return nil, "", fmt.Errorf("failed to unmarshal agent JSON: %w", err)
+		}
+		if cardJSON != nil {
+			agentJSON.Card = json.RawMessage(cardJSON)
 		}
 
 		resp := &models.AgentResponse{
@@ -1315,7 +1322,7 @@ func (db *PostgreSQL) GetAgentByName(ctx context.Context, tx pgx.Tx, agentName s
 	}
 
 	query := `
-		SELECT agent_name, version, status, published_at, updated_at, is_latest, value
+		SELECT agent_name, version, status, published_at, updated_at, is_latest, value, a2a_card
 		FROM agents
 		WHERE agent_name = $1 AND is_latest = true
 		ORDER BY published_at DESC
@@ -1325,7 +1332,8 @@ func (db *PostgreSQL) GetAgentByName(ctx context.Context, tx pgx.Tx, agentName s
 	var publishedAt, updatedAt time.Time
 	var isLatest bool
 	var valueJSON []byte
-	if err := db.getExecutor(tx).QueryRow(ctx, query, agentName).Scan(&name, &version, &status, &publishedAt, &updatedAt, &isLatest, &valueJSON); err != nil {
+	var cardJSON []byte
+	if err := db.getExecutor(tx).QueryRow(ctx, query, agentName).Scan(&name, &version, &status, &publishedAt, &updatedAt, &isLatest, &valueJSON, &cardJSON); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, database.ErrNotFound
 		}
@@ -1334,6 +1342,9 @@ func (db *PostgreSQL) GetAgentByName(ctx context.Context, tx pgx.Tx, agentName s
 	var agentJSON models.AgentJSON
 	if err := json.Unmarshal(valueJSON, &agentJSON); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal agent JSON: %w", err)
+	}
+	if cardJSON != nil {
+		agentJSON.Card = json.RawMessage(cardJSON)
 	}
 	return &models.AgentResponse{
 		Agent: agentJSON,
@@ -1362,7 +1373,7 @@ func (db *PostgreSQL) GetAgentByNameAndVersion(ctx context.Context, tx pgx.Tx, a
 	}
 
 	query := `
-		SELECT agent_name, version, status, published_at, updated_at, is_latest, value
+		SELECT agent_name, version, status, published_at, updated_at, is_latest, value, a2a_card
 		FROM agents
 		WHERE agent_name = $1 AND version = $2
 		LIMIT 1
@@ -1371,7 +1382,8 @@ func (db *PostgreSQL) GetAgentByNameAndVersion(ctx context.Context, tx pgx.Tx, a
 	var publishedAt, updatedAt time.Time
 	var isLatest bool
 	var valueJSON []byte
-	if err := db.getExecutor(tx).QueryRow(ctx, query, agentName, version).Scan(&name, &vers, &status, &publishedAt, &updatedAt, &isLatest, &valueJSON); err != nil {
+	var cardJSON []byte
+	if err := db.getExecutor(tx).QueryRow(ctx, query, agentName, version).Scan(&name, &vers, &status, &publishedAt, &updatedAt, &isLatest, &valueJSON, &cardJSON); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, database.ErrNotFound
 		}
@@ -1380,6 +1392,9 @@ func (db *PostgreSQL) GetAgentByNameAndVersion(ctx context.Context, tx pgx.Tx, a
 	var agentJSON models.AgentJSON
 	if err := json.Unmarshal(valueJSON, &agentJSON); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal agent JSON: %w", err)
+	}
+	if cardJSON != nil {
+		agentJSON.Card = json.RawMessage(cardJSON)
 	}
 	return &models.AgentResponse{
 		Agent: agentJSON,
@@ -1407,7 +1422,7 @@ func (db *PostgreSQL) GetAllVersionsByAgentName(ctx context.Context, tx pgx.Tx, 
 	}
 
 	query := `
-		SELECT agent_name, version, status, published_at, updated_at, is_latest, value
+		SELECT agent_name, version, status, published_at, updated_at, is_latest, value, a2a_card
 		FROM agents
 		WHERE agent_name = $1
 		ORDER BY published_at DESC
@@ -1423,12 +1438,16 @@ func (db *PostgreSQL) GetAllVersionsByAgentName(ctx context.Context, tx pgx.Tx, 
 		var publishedAt, updatedAt time.Time
 		var isLatest bool
 		var valueJSON []byte
-		if err := rows.Scan(&name, &version, &status, &publishedAt, &updatedAt, &isLatest, &valueJSON); err != nil {
+		var cardJSON []byte
+		if err := rows.Scan(&name, &version, &status, &publishedAt, &updatedAt, &isLatest, &valueJSON, &cardJSON); err != nil {
 			return nil, fmt.Errorf("failed to scan agent row: %w", err)
 		}
 		var agentJSON models.AgentJSON
 		if err := json.Unmarshal(valueJSON, &agentJSON); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal agent JSON: %w", err)
+		}
+		if cardJSON != nil {
+			agentJSON.Card = json.RawMessage(cardJSON)
 		}
 		results = append(results, &models.AgentResponse{
 			Agent: agentJSON,
@@ -1841,6 +1860,113 @@ func (db *PostgreSQL) GetAgentEmbeddingMetadata(ctx context.Context, tx pgx.Tx, 
 	}
 
 	return meta, nil
+}
+
+// ==============================
+// Agent Card implementations
+// ==============================
+
+// UpsertAgentCard stores or replaces the A2A Agent Card for an agent version.
+func (db *PostgreSQL) UpsertAgentCard(ctx context.Context, tx pgx.Tx, agentName, version string, card json.RawMessage) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	if err := db.authz.Check(ctx, auth.PermissionActionPush, auth.Resource{
+		Name: agentName,
+		Type: auth.PermissionArtifactTypeAgent,
+	}); err != nil {
+		return err
+	}
+
+	executor := db.getExecutor(tx)
+	query := `
+		UPDATE agents
+		SET a2a_card = $3, updated_at = NOW()
+		WHERE agent_name = $1 AND version = $2
+	`
+	result, err := executor.Exec(ctx, query, agentName, version, card)
+	if err != nil {
+		return fmt.Errorf("failed to upsert agent card: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return database.ErrNotFound
+	}
+	return nil
+}
+
+// GetAgentCard retrieves the A2A Agent Card for a specific agent version.
+// If version is empty, retrieves the card for the latest version.
+// Returns the card, the resolved version, and any error.
+func (db *PostgreSQL) GetAgentCard(ctx context.Context, tx pgx.Tx, agentName, version string) (json.RawMessage, string, error) {
+	if ctx.Err() != nil {
+		return nil, "", ctx.Err()
+	}
+
+	if err := db.authz.Check(ctx, auth.PermissionActionRead, auth.Resource{
+		Name: agentName,
+		Type: auth.PermissionArtifactTypeAgent,
+	}); err != nil {
+		return nil, "", err
+	}
+
+	executor := db.getExecutor(tx)
+
+	var query string
+	var args []any
+	if version == "" {
+		query = `
+			SELECT a2a_card, version FROM agents
+			WHERE agent_name = $1 AND is_latest = true AND a2a_card IS NOT NULL
+		`
+		args = []any{agentName}
+	} else {
+		query = `
+			SELECT a2a_card, version FROM agents
+			WHERE agent_name = $1 AND version = $2 AND a2a_card IS NOT NULL
+		`
+		args = []any{agentName, version}
+	}
+
+	var card json.RawMessage
+	var resolvedVersion string
+	err := executor.QueryRow(ctx, query, args...).Scan(&card, &resolvedVersion)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", database.ErrNotFound
+		}
+		return nil, "", fmt.Errorf("failed to get agent card: %w", err)
+	}
+	return card, resolvedVersion, nil
+}
+
+// DeleteAgentCard removes the A2A Agent Card from an agent version.
+func (db *PostgreSQL) DeleteAgentCard(ctx context.Context, tx pgx.Tx, agentName, version string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	if err := db.authz.Check(ctx, auth.PermissionActionDelete, auth.Resource{
+		Name: agentName,
+		Type: auth.PermissionArtifactTypeAgent,
+	}); err != nil {
+		return err
+	}
+
+	executor := db.getExecutor(tx)
+	query := `
+		UPDATE agents
+		SET a2a_card = NULL, updated_at = NOW()
+		WHERE agent_name = $1 AND version = $2
+	`
+	result, err := executor.Exec(ctx, query, agentName, version)
+	if err != nil {
+		return fmt.Errorf("failed to delete agent card: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return database.ErrNotFound
+	}
+	return nil
 }
 
 // ==============================

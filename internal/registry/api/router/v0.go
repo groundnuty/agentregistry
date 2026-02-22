@@ -45,6 +45,10 @@ func RegisterRoutes(
 	v0.RegisterSkillsEndpoints(api, pathPrefix, registry)
 	v0.RegisterSkillsCreateEndpoint(api, pathPrefix, registry)
 
+	if opts != nil && opts.Mux != nil {
+		v0.RegisterWellKnownAgentCardHandler(opts.Mux, pathPrefix, registry)
+	}
+
 	if opts != nil && opts.Indexer != nil && opts.JobManager != nil {
 		v0.RegisterEmbeddingsEndpoints(api, pathPrefix, opts.Indexer, opts.JobManager)
 		if opts.Mux != nil {

@@ -224,7 +224,7 @@ func (s *indexerImpl) indexAgents(ctx context.Context, opts IndexOptions, onProg
 			stats.Processed++
 			name := agent.Agent.Name
 			version := agent.Agent.Version
-			payload := embeddings.BuildAgentEmbeddingPayload(&agent.Agent)
+			payload := embeddings.BuildAgentEmbeddingPayload(&agent.Agent, agent.Agent.Card)
 
 			if strings.TrimSpace(payload) == "" {
 				log.Printf("Skipping agent %s@%s: empty embedding payload", name, version)

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -37,7 +38,9 @@ func BuildServerEmbeddingPayload(server *apiv0.ServerJSON) string {
 }
 
 // BuildAgentEmbeddingPayload mirrors BuildServerEmbeddingPayload but for AgentJSON entries.
-func BuildAgentEmbeddingPayload(agent *models.AgentJSON) string {
+// When a2aCard is non-nil, skill descriptions from the A2A Agent Card are appended
+// to the embedding payload, enabling semantic discovery by agent capability.
+func BuildAgentEmbeddingPayload(agent *models.AgentJSON, a2aCard json.RawMessage) string {
 	if agent == nil {
 		return ""
 	}
@@ -59,8 +62,48 @@ func BuildAgentEmbeddingPayload(agent *models.AgentJSON) string {
 	appendJSON(&parts, agent.Repository)
 	appendJSONArray(&parts, agent.Packages)
 	appendJSONArray(&parts, agent.Remotes)
+	appendA2ACardPayload(&parts, a2aCard)
 
 	return strings.Join(parts, "\n")
+}
+
+// appendA2ACardPayload extracts semantic content from an A2A Agent Card for embedding.
+// Pulls skill names, descriptions, and tags to enable capability-based discovery.
+func appendA2ACardPayload(parts *[]string, cardRaw json.RawMessage) {
+	if len(cardRaw) == 0 {
+		return
+	}
+	var card map[string]any
+	if err := json.Unmarshal(cardRaw, &card); err != nil {
+		slog.Warn("failed to unmarshal a2a card for embedding payload", "error", err)
+		return
+	}
+	appendIf(parts, getString(card, "name"), getString(card, "description"))
+	skills, ok := card["skills"].([]any)
+	if !ok {
+		return
+	}
+	for _, s := range skills {
+		skill, ok := s.(map[string]any)
+		if !ok {
+			continue
+		}
+		appendIf(parts, getString(skill, "name"), getString(skill, "description"))
+		if tags, ok := skill["tags"].([]any); ok {
+			for _, tag := range tags {
+				if t, ok := tag.(string); ok {
+					appendIf(parts, t)
+				}
+			}
+		}
+	}
+}
+
+func getString(m map[string]any, key string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
 }
 
 // PayloadChecksum returns the deterministic checksum for an embedding payload.
